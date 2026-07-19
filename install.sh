@@ -83,22 +83,84 @@ echo -e "\n${ORANGE}[+] Detectando banco de dados instalado...${NC}"
 DB_USER=""
 DB_NAME=""
 DB_PASS=""
+DB_HOST="localhost"
+DB_PORT=""
+DB_DOCKER_CONTAINER=""
 
-if command -v pg_dump &> /dev/null; then
-    echo -e "${GREEN}  ✔ PostgreSQL detectado.${NC}"
-    read -p "  Usuário do Postgres (padrão: postgres): " DB_USER_INPUT
-    DB_USER="${DB_USER_INPUT:-postgres}"
-    read -p "  Nome do banco de dados (padrão: postgres): " DB_NAME_INPUT
-    DB_NAME="${DB_NAME_INPUT:-postgres}"
-elif command -v mysqldump &> /dev/null; then
-    echo -e "${GREEN}  ✔ MySQL/MariaDB detectado.${NC}"
-    read -p "  Usuário do MySQL (padrão: root): " DB_USER_INPUT
-    DB_USER="${DB_USER_INPUT:-root}"
-    read -p "  Nome do banco de dados: " DB_NAME
-    read -s -p "  Senha do MySQL (oculta, ou ENTER se não tiver): " DB_PASS
+# Primeiro checa se existe banco rodando dentro de um Docker
+DOCKER_DB_CONTAINERS=""
+if command -v docker &> /dev/null; then
+    # Busca containers que tenham postgres, mysql ou mariadb no nome ou imagem
+    DOCKER_DB_CONTAINERS=$(docker ps --format '{{.Names}} ({{.Image}})' 2>/dev/null | grep -iE 'postgres|mysql|mariadb|mongo' || true)
+fi
+
+if [ -n "$DOCKER_DB_CONTAINERS" ]; then
+    echo -e "${GREEN}  ✔ Banco de dados detectado rodando no Docker:${NC}"
     echo ""
-else
-    echo -e "${ORANGE}  ⚠ Nenhum banco de dados detectado (pg_dump ou mysqldump). O comando /backup não funcionará até instalar um.${NC}"
+
+    # Lista os containers com números
+    i=1
+    while IFS= read -r container; do
+        container_name=$(echo "$container" | awk '{print $1}')
+        echo -e "    ${ORANGE}[$i]${NC} $container"
+        i=$((i+1))
+    done <<< "$DOCKER_DB_CONTAINERS"
+    echo -e "    ${ORANGE}[0]${NC} Nenhum desses / Meu banco roda nativo na VPS"
+    echo ""
+
+    read -p "  Qual desses containers roda o seu banco de dados? [0-$((i-1))]: " DB_DOCKER_CHOICE
+
+    if [ "$DB_DOCKER_CHOICE" != "0" ] && [ -n "$DB_DOCKER_CHOICE" ]; then
+        DB_DOCKER_CONTAINER=$(echo "$DOCKER_DB_CONTAINERS" | sed -n "${DB_DOCKER_CHOICE}p" | awk '{print $1}')
+        echo -e "${GREEN}  ✔ Container selecionado: ${DB_DOCKER_CONTAINER}${NC}"
+
+        # Detectar tipo de banco dentro do container
+        if docker exec "$DB_DOCKER_CONTAINER" which pg_dump &>/dev/null; then
+            echo -e "${GREEN}  ✔ PostgreSQL detectado no container.${NC}"
+            read -p "  Usuário do Postgres (padrão: postgres): " DB_USER_INPUT
+            DB_USER="${DB_USER_INPUT:-postgres}"
+            read -p "  Nome do banco de dados (padrão: postgres): " DB_NAME_INPUT
+            DB_NAME="${DB_NAME_INPUT:-postgres}"
+            read -p "  Porta do banco (padrão: 5432): " DB_PORT_INPUT
+            DB_PORT="${DB_PORT_INPUT:-5432}"
+        elif docker exec "$DB_DOCKER_CONTAINER" which mysqldump &>/dev/null; then
+            echo -e "${GREEN}  ✔ MySQL/MariaDB detectado no container.${NC}"
+            read -p "  Usuário do MySQL (padrão: root): " DB_USER_INPUT
+            DB_USER="${DB_USER_INPUT:-root}"
+            read -p "  Nome do banco de dados: " DB_NAME
+            read -s -p "  Senha do MySQL (oculta, ou ENTER se não tiver): " DB_PASS
+            echo ""
+            read -p "  Porta do banco (padrão: 3306): " DB_PORT_INPUT
+            DB_PORT="${DB_PORT_INPUT:-3306}"
+        else
+            echo -e "${ORANGE}  ⚠ Não foi possível detectar o tipo do banco dentro do container.${NC}"
+            DB_DOCKER_CONTAINER=""
+        fi
+    fi
+fi
+
+# Se não achou no Docker, tenta nativo
+if [ -z "$DB_DOCKER_CONTAINER" ]; then
+    if command -v pg_dump &> /dev/null; then
+        echo -e "${GREEN}  ✔ PostgreSQL detectado (nativo na VPS).${NC}"
+        read -p "  Usuário do Postgres (padrão: postgres): " DB_USER_INPUT
+        DB_USER="${DB_USER_INPUT:-postgres}"
+        read -p "  Nome do banco de dados (padrão: postgres): " DB_NAME_INPUT
+        DB_NAME="${DB_NAME_INPUT:-postgres}"
+        read -p "  Porta do banco (padrão: 5432): " DB_PORT_INPUT
+        DB_PORT="${DB_PORT_INPUT:-5432}"
+    elif command -v mysqldump &> /dev/null; then
+        echo -e "${GREEN}  ✔ MySQL/MariaDB detectado (nativo na VPS).${NC}"
+        read -p "  Usuário do MySQL (padrão: root): " DB_USER_INPUT
+        DB_USER="${DB_USER_INPUT:-root}"
+        read -p "  Nome do banco de dados: " DB_NAME
+        read -s -p "  Senha do MySQL (oculta, ou ENTER se não tiver): " DB_PASS
+        echo ""
+        read -p "  Porta do banco (padrão: 3306): " DB_PORT_INPUT
+        DB_PORT="${DB_PORT_INPUT:-3306}"
+    else
+        echo -e "${ORANGE}  ⚠ Nenhum banco de dados detectado. O comando /backup não funcionará até instalar um.${NC}"
+    fi
 fi
 
 # === Auto-detecção de processos para monitorar ===
@@ -158,6 +220,9 @@ DEPLOY_SCRIPT_PATH=${DEPLOY_SCRIPT_PATH}
 DB_USER=${DB_USER}
 DB_NAME=${DB_NAME}
 DB_PASS=${DB_PASS}
+DB_HOST=${DB_HOST}
+DB_PORT=${DB_PORT}
+DB_DOCKER_CONTAINER=${DB_DOCKER_CONTAINER}
 CRITICAL_PROCESSES=${DETECTED_PROCESSES}
 ENV_EOF
 

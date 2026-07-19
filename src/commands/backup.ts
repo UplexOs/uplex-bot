@@ -1,4 +1,4 @@
-import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder } from 'discord.js';
+import { EmbedBuilder, AttachmentBuilder } from 'discord.js';
 import shell from 'shelljs';
 import fs from 'fs';
 import path from 'path';
@@ -33,30 +33,69 @@ export async function handleBackupCommand(interaction: any) {
     let backupFile = '';
     let success = false;
     let errorMessage = '';
+    let dbEngine = '';
 
     const dbUser = process.env.DB_USER || 'postgres';
-    const dbName = process.env.DB_NAME || 'postgres'; // Mudado o fallback de database para postgres
+    const dbName = process.env.DB_NAME || 'postgres';
+    const dbPass = process.env.DB_PASS || '';
+    const dbHost = process.env.DB_HOST || 'localhost';
+    const dbPort = process.env.DB_PORT || '';
+    const dbDockerContainer = process.env.DB_DOCKER_CONTAINER || '';
 
     if (target === 'database' || target === 'postgres') {
         backupFile = path.join(backupDir, `db_backup_${dateStr}.sql`);
 
-        // Verifica se é MySQL ou PostgreSQL detectando o comando instalado
-        const hasPgDump = shell.exec('command -v pg_dump', { silent: true }).code === 0;
-        const hasMysqlDump = shell.exec('command -v mysqldump', { silent: true }).code === 0;
+        // Detecta se o banco roda dentro de um container Docker
+        const isDocker = dbDockerContainer !== '';
+
+        // Detecta o tipo de banco de dados
+        const hasPgDump = isDocker
+            ? shell.exec(`docker exec ${dbDockerContainer} which pg_dump`, { silent: true }).code === 0
+            : shell.exec('command -v pg_dump', { silent: true }).code === 0;
+
+        const hasMysqlDump = isDocker
+            ? shell.exec(`docker exec ${dbDockerContainer} which mysqldump`, { silent: true }).code === 0
+            : shell.exec('command -v mysqldump', { silent: true }).code === 0;
 
         let result;
+        let portFlag = '';
+
         if (hasPgDump) {
-            result = shell.exec(`sudo -u ${dbUser} pg_dump ${dbName} > ${backupFile}`, { silent: true });
+            dbEngine = 'PostgreSQL';
+            portFlag = dbPort ? `-p ${dbPort}` : '';
+
+            if (isDocker) {
+                result = shell.exec(
+                    `docker exec ${dbDockerContainer} pg_dump -U ${dbUser} ${portFlag} ${dbName} > ${backupFile}`,
+                    { silent: true }
+                );
+            } else {
+                result = shell.exec(
+                    `sudo -u ${dbUser} pg_dump -h ${dbHost} ${portFlag} ${dbName} > ${backupFile}`,
+                    { silent: true }
+                );
+            }
         } else if (hasMysqlDump) {
-            const mysqlUser = process.env.DB_USER || 'root';
-            const mysqlPass = process.env.DB_PASS ? `-p${process.env.DB_PASS}` : '';
-            result = shell.exec(`mysqldump -u ${mysqlUser} ${mysqlPass} ${dbName} > ${backupFile}`, { silent: true });
+            dbEngine = 'MySQL/MariaDB';
+            portFlag = dbPort ? `-P ${dbPort}` : '';
+            const passFlag = dbPass ? `-p${dbPass}` : '';
+
+            if (isDocker) {
+                result = shell.exec(
+                    `docker exec ${dbDockerContainer} mysqldump -u ${dbUser} ${passFlag} -h ${dbHost} ${portFlag} ${dbName} > ${backupFile}`,
+                    { silent: true }
+                );
+            } else {
+                result = shell.exec(
+                    `mysqldump -u ${dbUser} ${passFlag} -h ${dbHost} ${portFlag} ${dbName} > ${backupFile}`,
+                    { silent: true }
+                );
+            }
         } else {
-            result = { code: 1, stderr: "Nenhum banco de dados detectado (pg_dump ou mysqldump não instalados)" };
+            result = { code: 1, stderr: "Nenhum banco de dados detectado (pg_dump ou mysqldump não encontrados)" };
         }
 
         if (result.code === 0) {
-            // Compress
             const gzipResult = shell.exec(`gzip ${backupFile}`, { silent: true });
             if (gzipResult.code === 0) {
                 backupFile = `${backupFile}.gz`;
@@ -65,7 +104,7 @@ export async function handleBackupCommand(interaction: any) {
                 errorMessage = "Falha ao compactar o backup.";
             }
         } else {
-            errorMessage = result.stderr || "Erro desconhecido ao rodar pg_dump";
+            errorMessage = result.stderr || "Erro desconhecido ao rodar o dump do banco";
         }
     } else {
         errorMessage = `Alvo '${target}' não é suportado para backup manual ainda.`;
@@ -75,24 +114,28 @@ export async function handleBackupCommand(interaction: any) {
         const stats = fs.statSync(backupFile);
         const sizeStr = formatBytes(stats.size);
 
+        const runningIn = dbDockerContainer ? `Docker (${dbDockerContainer})` : 'Nativo (VPS)';
+
         const embed = new EmbedBuilder()
             .setTitle('✅ Backup Concluído')
             .setDescription(`O backup de **${target}** foi realizado com sucesso.`)
             .addFields(
+                { name: 'Engine', value: `\`${dbEngine}\``, inline: true },
+                { name: 'Ambiente', value: `\`${runningIn}\``, inline: true },
+                { name: 'Banco', value: `\`${dbName}\``, inline: true },
                 { name: 'Arquivo', value: `\`${path.basename(backupFile)}\``, inline: true },
-                { name: 'Tamanho', value: `\`${sizeStr}\``, inline: true }
+                { name: 'Tamanho', value: `\`${sizeStr}\``, inline: true },
             )
             .setColor('#00ff00')
             .setTimestamp();
 
-        // Se for menor que 25MB (limite do Discord para usuários sem Nitro)
         if (stats.size < 25 * 1024 * 1024) {
             const attachment = new AttachmentBuilder(backupFile);
             await interaction.editReply({ content: '', embeds: [embed], files: [attachment] });
         } else {
             embed.addFields({
                 name: 'Download',
-                value: `⚠️ Arquivo muito grande para enviar pelo Discord. Salvo localmente em \`${backupFile}\`.`
+                value: `⚠️ Arquivo muito grande para o Discord. Salvo em \`${backupFile}\`.`
             });
             await interaction.editReply({ content: '', embeds: [embed] });
         }
