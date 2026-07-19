@@ -6,6 +6,7 @@ import { startLogScanner } from './monitors/logScanner';
 import { startAuthMonitor } from './monitors/authScanner';
 import { handleStatusCommand } from './commands/status';
 import { handleBackupCommand } from './commands/backup';
+import { handlePainelCommand } from './commands/painel';
 
 dotenv.config();
 
@@ -64,6 +65,8 @@ client.on('interactionCreate', async (interaction) => {
 
         if (commandName === 'status') {
             await handleStatusCommand(interaction);
+        } else if (commandName === 'painel') {
+            await handlePainelCommand(interaction);
         } else if (commandName === 'backup') {
             await handleBackupCommand(interaction);
         }
@@ -88,6 +91,29 @@ client.on('interactionCreate', async (interaction) => {
             }
 
             await interaction.editReply(`✅ Serviço ${target} reiniciado com sucesso!`);
+        } else if (action === 'panel') {
+            const shell = require('shelljs');
+            if (target === 'restart' && extra === 'pm2') {
+                await interaction.editReply(`🔄 Reiniciando todos os processos PM2...`);
+                shell.exec('pm2 restart all');
+                await interaction.editReply(`✅ Todos os processos PM2 foram reiniciados!`);
+            } else if (target === 'restart' && extra === 'docker') {
+                await interaction.editReply(`🐳 Reiniciando todos os containers Docker...`);
+                // Restart only running containers
+                shell.exec('docker restart $(docker ps -q)');
+                await interaction.editReply(`✅ Todos os containers Docker foram reiniciados!`);
+            } else if (target === 'update' && extra === 'system') {
+                await interaction.editReply(`🛠️ Baixando atualizações do sistema... (Isso pode demorar alguns minutos)`);
+                const result = shell.exec('sudo apt-get update -y && sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y', { silent: true });
+                if (result.code === 0) {
+                    await interaction.editReply(`✅ Sistema atualizado com sucesso!\n\`\`\`\nAtualizações concluídas sem erros.\n\`\`\``);
+                } else {
+                    await interaction.editReply(`❌ Erro ao atualizar sistema:\n\`\`\`\n${result.stderr.substring(0, 1000)}\n\`\`\``);
+                }
+            } else if (target === 'reboot' && extra === 'vps') {
+                await interaction.editReply(`⚠️ A VPS está sendo reiniciada AGORA. O bot ficará offline por alguns instantes e voltará automaticamente.`);
+                shell.exec('sudo reboot');
+            }
         } else if (action === 'clearcache') {
             const shell = require('shelljs');
             await interaction.editReply(`🧹 Limpando cache do sistema...`);

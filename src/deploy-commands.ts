@@ -9,6 +9,9 @@ const commands = [
         .setName('status')
         .setDescription('Mostra o uso de CPU, RAM, Disco e uptime da VPS.'),
     new SlashCommandBuilder()
+        .setName('painel')
+        .setDescription('Painel de Controle interativo com botões para reiniciar serviços e limpar a VPS.'),
+    new SlashCommandBuilder()
         .setName('backup')
         .setDescription('Faz o backup de um banco de dados e tenta enviá-lo pelo Discord.')
         .addStringOption(option =>
