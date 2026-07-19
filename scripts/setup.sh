@@ -1,20 +1,18 @@
 #!/bin/bash
 
 # ==============================================================================
-# Ultimate Infrastructure Kit - Bootstrap Script
+# UpLex VPS - Bootstrap Script
 # ==============================================================================
 # Este script configura uma VPS do zero com segurança, otimizações e proxy.
 # Requer execução como root.
 
-set -e # Interrompe o script em caso de erro
-
 # Cores para output
 GREEN='\033[0;32m'
 RED='\033[0;31m'
-YELLOW='\033[1;33m'
+ORANGE='\033[38;5;214m'
 NC='\033[0m'
 
-echo -e "${GREEN}=== Inicializando o Kit de Infraestrutura Definitivo ===${NC}"
+echo -e "${ORANGE}=== UpLex VPS - Configuração do Sistema ===${NC}"
 
 if [ "$EUID" -ne 0 ]; then
   echo -e "${RED}Por favor, execute este script como root (sudo).${NC}"
@@ -24,15 +22,40 @@ fi
 # ==============================================================================
 # 0. Coleta de Variáveis
 # ==============================================================================
-echo -e "${YELLOW}Por favor, insira as informações abaixo:${NC}"
+echo -e "${ORANGE}Por favor, insira as informações abaixo:${NC}"
 read -p "Webhook URL do Discord para alertas de segurança: " DISCORD_SECURITY_WEBHOOK
-read -p "Domínio para o Nginx/Certbot (ex: api.meujogo.com): " DOMAIN_NAME
-read -p "Email para registro no Let's Encrypt (Certbot): " LETSENCRYPT_EMAIL
+read -p "Domínio para o Nginx/Certbot (ex: api.meusaas.com ou deixe em branco): " DOMAIN_NAME
+read -p "Email para registro no Let's Encrypt (ou deixe em branco): " LETSENCRYPT_EMAIL
 
-# Atualizando repositórios
-echo -e "\n${GREEN}[+] Atualizando o sistema...${NC}"
-apt-get update && apt-get upgrade -y
-apt-get install -y curl wget git ufw iptables-persistent fail2ban nginx certbot python3-certbot-nginx jq docker.io docker-compose
+# ==============================================================================
+# 0.1 Resolve pacotes quebrados e conflitos comuns em VPSs
+# ==============================================================================
+echo -e "\n${ORANGE}[+] Resolvendo dependências quebradas...${NC}"
+apt-get update -yqq || true
+apt-get --fix-broken install -yqq || true
+dpkg --configure -a || true
+
+# Remove pacotes que conflitam entre si em VPSs pré-configuradas
+# containerd.io (Docker oficial) conflita com containerd (Ubuntu)
+# iptables-persistent conflita com ufw
+echo -e "${ORANGE}[+] Removendo pacotes conflitantes (se existirem)...${NC}"
+apt-get remove -yqq iptables-persistent netfilter-persistent containerd 2>/dev/null || true
+
+echo -e "\n${ORANGE}[+] Atualizando o sistema...${NC}"
+apt-get update -yqq && apt-get upgrade -yqq || true
+
+# Instala pacotes em grupos separados para evitar conflitos em cadeia
+echo -e "${ORANGE}[+] Instalando pacotes essenciais...${NC}"
+apt-get install -yqq curl wget git jq || true
+
+echo -e "${ORANGE}[+] Instalando firewall e segurança...${NC}"
+apt-get install -yqq ufw fail2ban || true
+
+echo -e "${ORANGE}[+] Instalando Nginx e Certbot...${NC}"
+apt-get install -yqq nginx certbot python3-certbot-nginx || true
+
+echo -e "${ORANGE}[+] Instalando Docker...${NC}"
+apt-get install -yqq docker.io docker-compose || true
 
 # ==============================================================================
 # 1. Segurança Base (UFW, Iptables e Fail2ban)
