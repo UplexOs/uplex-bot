@@ -2,11 +2,16 @@ import shell from 'shelljs';
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 
 // Lista de processos críticos a monitorar (nomes no PM2, Docker ou systemctl)
-const CRITICAL_PROCESSES = ['DayZServer', 'FXServer', 'database'];
+// Pode ser sobrescrito pelo .env
+const envProcesses = process.env.CRITICAL_PROCESSES;
+const CRITICAL_PROCESSES = envProcesses
+    ? envProcesses.split(',').map(p => p.trim())
+    : ['DayZServer', 'FXServer', 'database'];
+
 const CHECK_INTERVAL = 60000; // 1 minuto
 
 export function startProcessWatchdog(discordChannel: any) {
-    console.log('👀 Iniciando Watchdog de Processos...');
+    console.log(`👀 Iniciando Watchdog para processos: ${CRITICAL_PROCESSES.join(', ')}`);
 
     setInterval(() => {
         CRITICAL_PROCESSES.forEach(processName => {
@@ -16,12 +21,19 @@ export function startProcessWatchdog(discordChannel: any) {
             // Verifica Docker (se o container está rodando)
             const dockerCheck = shell.exec(`docker ps --format '{{.Names}}' | grep -q "^${processName}$"`, { silent: true });
 
-            // Verifica banco de dados (ex: postgres) especial
+            // Verifica banco de dados especial
             let isRunning = false;
+            let dbType = '';
 
-            if (processName === 'database') {
+            if (processName === 'database' || processName === 'postgres' || processName === 'mysql') {
                 const pgCheck = shell.exec(`systemctl is-active --quiet postgresql`, { silent: true });
-                isRunning = pgCheck.code === 0;
+                const mysqlCheck = shell.exec(`systemctl is-active --quiet mysql`, { silent: true });
+                const mariadbCheck = shell.exec(`systemctl is-active --quiet mariadb`, { silent: true });
+
+                if (pgCheck.code === 0) { isRunning = true; dbType = 'postgresql'; }
+                else if (mysqlCheck.code === 0) { isRunning = true; dbType = 'mysql'; }
+                else if (mariadbCheck.code === 0) { isRunning = true; dbType = 'mariadb'; }
+                else { isRunning = pm2Check.code === 0 || dockerCheck.code === 0; }
             } else {
                 isRunning = pm2Check.code === 0 || dockerCheck.code === 0;
             }

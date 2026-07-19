@@ -35,11 +35,25 @@ export async function handleBackupCommand(interaction: any) {
     let errorMessage = '';
 
     const dbUser = process.env.DB_USER || 'postgres';
-    const dbName = process.env.DB_NAME || 'database';
+    const dbName = process.env.DB_NAME || 'postgres'; // Mudado o fallback de database para postgres
 
     if (target === 'database' || target === 'postgres') {
         backupFile = path.join(backupDir, `db_backup_${dateStr}.sql`);
-        const result = shell.exec(`sudo -u ${dbUser} pg_dump ${dbName} > ${backupFile}`, { silent: true });
+
+        // Verifica se é MySQL ou PostgreSQL detectando o comando instalado
+        const hasPgDump = shell.exec('command -v pg_dump', { silent: true }).code === 0;
+        const hasMysqlDump = shell.exec('command -v mysqldump', { silent: true }).code === 0;
+
+        let result;
+        if (hasPgDump) {
+            result = shell.exec(`sudo -u ${dbUser} pg_dump ${dbName} > ${backupFile}`, { silent: true });
+        } else if (hasMysqlDump) {
+            const mysqlUser = process.env.DB_USER || 'root';
+            const mysqlPass = process.env.DB_PASS ? `-p${process.env.DB_PASS}` : '';
+            result = shell.exec(`mysqldump -u ${mysqlUser} ${mysqlPass} ${dbName} > ${backupFile}`, { silent: true });
+        } else {
+            result = { code: 1, stderr: "Nenhum banco de dados detectado (pg_dump ou mysqldump não instalados)" };
+        }
 
         if (result.code === 0) {
             // Compress

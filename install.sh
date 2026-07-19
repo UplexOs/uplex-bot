@@ -63,18 +63,89 @@ fi
 # 3. Coleta dados para o Agente TypeScript
 echo -e "\n${GREEN}[+] Iniciando Parte 2: Configuração do Agente Discord (TypeScript)${NC}"
 echo -e "${ORANGE}Vamos configurar o seu Bot do Discord.${NC}"
-read -p "Insira o TOKEN do Bot do Discord: " DISCORD_BOT_TOKEN
+read -s -p "Insira o TOKEN do Bot do Discord (oculto): " DISCORD_BOT_TOKEN
+echo ""
 read -p "Insira o Client ID da sua aplicação do Discord: " DISCORD_CLIENT_ID
-read -p "Insira o ID do Cargo (Role) no Discord que terá permissão de admin: " DISCORD_ADMIN_ROLE_ID
+read -p "Insira o ID do Cargo (Role) que terá permissão de admin no bot: " DISCORD_ADMIN_ROLE_ID
 
-echo -e "\n${ORANGE}[Opcional] CI/CD e Webhooks${NC}"
-read -p "Insira a Secret do Webhook do Github (ou deixe em branco para pular): " GITHUB_WEBHOOK_SECRET
+echo -e "\n${ORANGE}[Opcional] CI/CD — Webhook do GitHub${NC}"
+read -p "Insira a Secret do Webhook do Github (ou ENTER para pular): " GITHUB_WEBHOOK_SECRET
 
 if [ -n "$GITHUB_WEBHOOK_SECRET" ]; then
-    read -p "Caminho do script de deploy do repositório (ex: /var/www/app/deploy.sh): " DEPLOY_SCRIPT_PATH
+    read -p "Caminho do script de deploy (ex: /var/www/app/deploy.sh): " DEPLOY_SCRIPT_PATH
 else
     DEPLOY_SCRIPT_PATH=""
-    echo -e "${ORANGE}Pulando configuração de Deploy Automático.${NC}"
+    echo -e "${ORANGE}  Pulando configuração de Deploy Automático.${NC}"
+fi
+
+# === Auto-detecção de banco de dados ===
+echo -e "\n${ORANGE}[+] Detectando banco de dados instalado...${NC}"
+DB_USER=""
+DB_NAME=""
+DB_PASS=""
+
+if command -v pg_dump &> /dev/null; then
+    echo -e "${GREEN}  ✔ PostgreSQL detectado.${NC}"
+    read -p "  Usuário do Postgres (padrão: postgres): " DB_USER_INPUT
+    DB_USER="${DB_USER_INPUT:-postgres}"
+    read -p "  Nome do banco de dados (padrão: postgres): " DB_NAME_INPUT
+    DB_NAME="${DB_NAME_INPUT:-postgres}"
+elif command -v mysqldump &> /dev/null; then
+    echo -e "${GREEN}  ✔ MySQL/MariaDB detectado.${NC}"
+    read -p "  Usuário do MySQL (padrão: root): " DB_USER_INPUT
+    DB_USER="${DB_USER_INPUT:-root}"
+    read -p "  Nome do banco de dados: " DB_NAME
+    read -s -p "  Senha do MySQL (oculta, ou ENTER se não tiver): " DB_PASS
+    echo ""
+else
+    echo -e "${ORANGE}  ⚠ Nenhum banco de dados detectado (pg_dump ou mysqldump). O comando /backup não funcionará até instalar um.${NC}"
+fi
+
+# === Auto-detecção de processos para monitorar ===
+echo -e "\n${ORANGE}[+] Detectando serviços rodando...${NC}"
+DETECTED_PROCESSES=""
+
+# Detecta processos PM2
+if command -v pm2 &> /dev/null; then
+    PM2_PROCS=$(pm2 jlist 2>/dev/null | grep -oP '"name":"\K[^"]+' | paste -sd ',' -)
+    if [ -n "$PM2_PROCS" ]; then
+        DETECTED_PROCESSES="$PM2_PROCS"
+        echo -e "${GREEN}  ✔ PM2: $PM2_PROCS${NC}"
+    fi
+fi
+
+# Detecta containers Docker
+if command -v docker &> /dev/null; then
+    DOCKER_PROCS=$(docker ps --format '{{.Names}}' 2>/dev/null | paste -sd ',' -)
+    if [ -n "$DOCKER_PROCS" ]; then
+        if [ -n "$DETECTED_PROCESSES" ]; then
+            DETECTED_PROCESSES="$DETECTED_PROCESSES,$DOCKER_PROCS"
+        else
+            DETECTED_PROCESSES="$DOCKER_PROCS"
+        fi
+        echo -e "${GREEN}  ✔ Docker: $DOCKER_PROCS${NC}"
+    fi
+fi
+
+# Detecta banco de dados como serviço
+if systemctl is-active --quiet postgresql 2>/dev/null; then
+    if [ -n "$DETECTED_PROCESSES" ]; then
+        DETECTED_PROCESSES="$DETECTED_PROCESSES,database"
+    else
+        DETECTED_PROCESSES="database"
+    fi
+    echo -e "${GREEN}  ✔ Systemd: postgresql${NC}"
+elif systemctl is-active --quiet mysql 2>/dev/null || systemctl is-active --quiet mariadb 2>/dev/null; then
+    if [ -n "$DETECTED_PROCESSES" ]; then
+        DETECTED_PROCESSES="$DETECTED_PROCESSES,database"
+    else
+        DETECTED_PROCESSES="database"
+    fi
+    echo -e "${GREEN}  ✔ Systemd: mysql/mariadb${NC}"
+fi
+
+if [ -z "$DETECTED_PROCESSES" ]; then
+    echo -e "${ORANGE}  ⚠ Nenhum serviço detectado. O watchdog não irá monitorar nada até haver processos no PM2, Docker ou Systemd.${NC}"
 fi
 
 # Cria o .env
@@ -84,6 +155,10 @@ DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID}
 DISCORD_ADMIN_ROLE_ID=${DISCORD_ADMIN_ROLE_ID}
 GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
 DEPLOY_SCRIPT_PATH=${DEPLOY_SCRIPT_PATH}
+DB_USER=${DB_USER}
+DB_NAME=${DB_NAME}
+DB_PASS=${DB_PASS}
+CRITICAL_PROCESSES=${DETECTED_PROCESSES}
 ENV_EOF
 
 echo -e "\n${ORANGE}[+] Instalando dependências do Bot (NPM)...${NC}"

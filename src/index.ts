@@ -9,7 +9,20 @@ import { handleBackupCommand } from './commands/backup';
 
 dotenv.config();
 
-const ALERTS_CHANNEL_NAME = 'uplex-alerts';
+// Nomes dos canais que o bot vai criar/buscar automaticamente
+const CHANNEL_NAMES = {
+    alerts: 'uplex-alerts',         // Processos caíram, erros de log
+    security: 'uplex-security',     // Logins SSH, Fail2ban, IPs bloqueados
+    deploys: 'uplex-deploys',       // CI/CD, webhooks do Github
+    backups: 'uplex-backups',       // Backups de banco de dados
+};
+
+export interface UplexChannels {
+    alerts: TextChannel;
+    security: TextChannel;
+    deploys: TextChannel;
+    backups: TextChannel;
+}
 
 const client = new Client({
     intents: [
@@ -22,7 +35,6 @@ const client = new Client({
 
 // Setup bot interactions
 client.on('interactionCreate', async (interaction) => {
-    // Checagem de permissão via ID do cargo (role) configurado no .env
     const adminRoleId = process.env.DISCORD_ADMIN_ROLE_ID;
 
     let hasPermission = false;
@@ -69,8 +81,8 @@ client.on('interactionCreate', async (interaction) => {
             const shell = require('shelljs');
             await interaction.editReply(`🔄 Reiniciando serviço: ${target}...`);
 
-            if (target === 'database') {
-                shell.exec('sudo systemctl restart postgresql');
+            if (target === 'database' || target === 'postgres' || target === 'mysql') {
+                shell.exec('sudo systemctl restart postgresql || sudo systemctl restart mysql || sudo systemctl restart mariadb');
             } else {
                 shell.exec(`pm2 restart ${target} || docker restart ${target} || sudo systemctl restart ${target}`);
             }
@@ -98,6 +110,26 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
+// Função para buscar ou criar um canal de texto
+async function getOrCreateChannel(guild: any, name: string, topic: string): Promise<TextChannel> {
+    let channel = guild.channels.cache.find(
+        (ch: any) => ch.type === ChannelType.GuildText && ch.name === name
+    ) as TextChannel | undefined;
+
+    if (!channel) {
+        channel = await guild.channels.create({
+            name: name,
+            type: ChannelType.GuildText,
+            topic: topic,
+        });
+        console.log(`  ✅ Canal #${name} criado.`);
+    } else {
+        console.log(`  ✔️  Canal #${name} encontrado.`);
+    }
+
+    return channel;
+}
+
 client.once('ready', async () => {
     console.log(`🤖 Bot iniciado como ${client.user?.tag}`);
 
@@ -106,42 +138,32 @@ client.once('ready', async () => {
         console.warn("⚠️ DISCORD_ADMIN_ROLE_ID não configurado. Apenas o dono do servidor poderá usar os comandos.");
     }
 
-    // Encontrar ou criar o canal de alertas automaticamente
     const guild = client.guilds.cache.first();
     if (!guild) {
         console.error("❌ O bot não está em nenhum servidor Discord.");
         return;
     }
 
-    let alertChannel: TextChannel | undefined;
+    console.log('📂 Configurando canais...');
 
-    // Procura um canal com o nome 'uplex-alerts'
-    alertChannel = guild.channels.cache.find(
-        ch => ch.type === ChannelType.GuildText && ch.name === ALERTS_CHANNEL_NAME
-    ) as TextChannel | undefined;
+    try {
+        const channels: UplexChannels = {
+            alerts: await getOrCreateChannel(guild, CHANNEL_NAMES.alerts, '⚠️ Alertas de processos e erros de sistema'),
+            security: await getOrCreateChannel(guild, CHANNEL_NAMES.security, '🛡️ Logins SSH, ataques bloqueados e firewall'),
+            deploys: await getOrCreateChannel(guild, CHANNEL_NAMES.deploys, '🚀 Deploy automático via GitHub Webhook'),
+            backups: await getOrCreateChannel(guild, CHANNEL_NAMES.backups, '💾 Backups de banco de dados'),
+        };
 
-    // Se não existir, cria automaticamente
-    if (!alertChannel) {
-        try {
-            alertChannel = await guild.channels.create({
-                name: ALERTS_CHANNEL_NAME,
-                type: ChannelType.GuildText,
-                topic: '🤖 Canal de alertas do UpLex InfraBot — monitoramento, segurança e deploys.',
-            });
-            console.log(`✅ Canal #${ALERTS_CHANNEL_NAME} criado automaticamente.`);
-        } catch (err) {
-            console.error(`❌ Não foi possível criar o canal #${ALERTS_CHANNEL_NAME}:`, err);
-            return;
-        }
+        channels.alerts.send("✅ **UpLex InfraBot** online e monitorando o sistema.");
+
+        // Iniciar monitores passando os canais corretos
+        startProcessWatchdog(channels.alerts);    // Processos caindo → #uplex-alerts
+        startLogScanner(channels.alerts);          // Erros de log → #uplex-alerts
+        startAuthMonitor(channels.security);       // SSH e Fail2ban → #uplex-security
+        setupServer(channels.deploys);             // CI/CD → #uplex-deploys
+    } catch (err) {
+        console.error('❌ Erro ao configurar canais:', err);
     }
-
-    alertChannel.send("✅ Agente de Infraestrutura online e monitorando o sistema.");
-
-    // Iniciar monitores passando o canal para alertas
-    startProcessWatchdog(alertChannel);
-    startLogScanner(alertChannel);
-    startAuthMonitor(alertChannel);
-    setupServer(alertChannel);
 });
 
 client.login(process.env.DISCORD_BOT_TOKEN);
