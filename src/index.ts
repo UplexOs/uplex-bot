@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Partials, ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, Partials, ChannelType, TextChannel } from 'discord.js';
 import * as dotenv from 'dotenv';
 import { setupServer } from './server/express';
 import { startProcessWatchdog } from './monitors/processWatchdog';
@@ -9,26 +9,38 @@ import { handleBackupCommand } from './commands/backup';
 
 dotenv.config();
 
+const ALERTS_CHANNEL_NAME = 'uplex-alerts';
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.GuildMembers,
     ],
     partials: [Partials.Channel]
 });
 
 // Setup bot interactions
 client.on('interactionCreate', async (interaction) => {
-    // Apenas admins ou equipe de infra podem interagir
-    const member = await interaction.guild?.members.fetch(interaction.user.id);
-    const hasPermission = member?.roles.cache.some(role =>
-        role.name.includes('Admin') || role.name.includes('Infra')
-    );
+    // Checagem de permissão via ID do cargo (role) configurado no .env
+    const adminRoleId = process.env.DISCORD_ADMIN_ROLE_ID;
+
+    let hasPermission = false;
+
+    if (interaction.guild && adminRoleId) {
+        const member = await interaction.guild.members.fetch(interaction.user.id);
+        hasPermission = member.roles.cache.has(adminRoleId);
+    }
+
+    // Fallback: dono do servidor sempre tem permissão
+    if (!hasPermission && interaction.guild) {
+        hasPermission = interaction.user.id === interaction.guild.ownerId;
+    }
 
     if (!hasPermission) {
         if (interaction.isRepliable()) {
             await interaction.reply({
-                content: '❌ Você não tem permissão para executar esta ação. Necessário cargo contendo "Admin" ou "Infra".',
+                content: `❌ Você não tem permissão para executar esta ação. Necessário possuir o cargo autorizado.`,
                 ephemeral: true
             });
         }
@@ -86,27 +98,50 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-client.once('ready', () => {
+client.once('ready', async () => {
     console.log(`🤖 Bot iniciado como ${client.user?.tag}`);
 
-    const alertChannelId = process.env.DISCORD_ALERTS_CHANNEL_ID;
-    if (!alertChannelId) {
-        console.error("DISCORD_ALERTS_CHANNEL_ID não configurado no .env");
+    const adminRoleId = process.env.DISCORD_ADMIN_ROLE_ID;
+    if (!adminRoleId) {
+        console.warn("⚠️ DISCORD_ADMIN_ROLE_ID não configurado. Apenas o dono do servidor poderá usar os comandos.");
+    }
+
+    // Encontrar ou criar o canal de alertas automaticamente
+    const guild = client.guilds.cache.first();
+    if (!guild) {
+        console.error("❌ O bot não está em nenhum servidor Discord.");
         return;
     }
 
-    const channel = client.channels.cache.get(alertChannelId);
-    if (channel && channel.isTextBased() && 'send' in channel) {
-        (channel as any).send("✅ Agente de Infraestrutura online e monitorando o sistema.");
+    let alertChannel: TextChannel | undefined;
 
-        // Iniciar monitores passando o canal para alertas
-        startProcessWatchdog(channel);
-        startLogScanner(channel);
-        startAuthMonitor(channel); // Adicionado monitor de SSH/Auth
-        setupServer(channel);
-    } else {
-        console.error("Canal de alertas não encontrado ou não é canal de texto.");
+    // Procura um canal com o nome 'uplex-alerts'
+    alertChannel = guild.channels.cache.find(
+        ch => ch.type === ChannelType.GuildText && ch.name === ALERTS_CHANNEL_NAME
+    ) as TextChannel | undefined;
+
+    // Se não existir, cria automaticamente
+    if (!alertChannel) {
+        try {
+            alertChannel = await guild.channels.create({
+                name: ALERTS_CHANNEL_NAME,
+                type: ChannelType.GuildText,
+                topic: '🤖 Canal de alertas do UpLex InfraBot — monitoramento, segurança e deploys.',
+            });
+            console.log(`✅ Canal #${ALERTS_CHANNEL_NAME} criado automaticamente.`);
+        } catch (err) {
+            console.error(`❌ Não foi possível criar o canal #${ALERTS_CHANNEL_NAME}:`, err);
+            return;
+        }
     }
+
+    alertChannel.send("✅ Agente de Infraestrutura online e monitorando o sistema.");
+
+    // Iniciar monitores passando o canal para alertas
+    startProcessWatchdog(alertChannel);
+    startLogScanner(alertChannel);
+    startAuthMonitor(alertChannel);
+    setupServer(alertChannel);
 });
 
 client.login(process.env.DISCORD_BOT_TOKEN);

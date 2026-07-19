@@ -64,16 +64,24 @@ fi
 echo -e "\n${GREEN}[+] Iniciando Parte 2: Configuração do Agente Discord (TypeScript)${NC}"
 echo -e "${ORANGE}Vamos configurar o seu Bot do Discord.${NC}"
 read -p "Insira o TOKEN do Bot do Discord: " DISCORD_BOT_TOKEN
-read -p "Insira o ID do Canal do Discord para os Alertas: " DISCORD_ALERTS_CHANNEL_ID
 read -p "Insira o Client ID da sua aplicação do Discord: " DISCORD_CLIENT_ID
-read -p "Insira a Secret do Webhook do Github (ou deixe em branco): " GITHUB_WEBHOOK_SECRET
-read -p "Caminho do script de deploy do repositório (ex: /var/www/meujogo/deploy.sh): " DEPLOY_SCRIPT_PATH
+read -p "Insira o ID do Cargo (Role) no Discord que terá permissão de admin: " DISCORD_ADMIN_ROLE_ID
+
+echo -e "\n${ORANGE}[Opcional] CI/CD e Webhooks${NC}"
+read -p "Insira a Secret do Webhook do Github (ou deixe em branco para pular): " GITHUB_WEBHOOK_SECRET
+
+if [ -n "$GITHUB_WEBHOOK_SECRET" ]; then
+    read -p "Caminho do script de deploy do repositório (ex: /var/www/app/deploy.sh): " DEPLOY_SCRIPT_PATH
+else
+    DEPLOY_SCRIPT_PATH=""
+    echo -e "${ORANGE}Pulando configuração de Deploy Automático.${NC}"
+fi
 
 # Cria o .env
 cat << ENV_EOF > .env
 DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
-DISCORD_ALERTS_CHANNEL_ID=${DISCORD_ALERTS_CHANNEL_ID}
 DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID}
+DISCORD_ADMIN_ROLE_ID=${DISCORD_ADMIN_ROLE_ID}
 GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
 DEPLOY_SCRIPT_PATH=${DEPLOY_SCRIPT_PATH}
 ENV_EOF

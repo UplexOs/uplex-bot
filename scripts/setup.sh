@@ -23,7 +23,6 @@ fi
 # 0. Coleta de Variáveis
 # ==============================================================================
 echo -e "${ORANGE}Por favor, insira as informações abaixo:${NC}"
-read -p "Webhook URL do Discord para alertas de segurança: " DISCORD_SECURITY_WEBHOOK
 read -p "Domínio para o Nginx/Certbot (ex: api.meusaas.com ou deixe em branco): " DOMAIN_NAME
 read -p "Email para registro no Let's Encrypt (ou deixe em branco): " LETSENCRYPT_EMAIL
 
@@ -72,16 +71,7 @@ ufw --force enable
 
 echo -e "\n${GREEN}[+] Configurando Fail2ban e Alertas no Discord...${NC}"
 
-# Criar action do Discord para o Fail2ban
-cat << 'EOF' > /etc/fail2ban/action.d/discord-webhook.conf
-[Definition]
-actionstart =
-actionstop =
-actioncheck =
-actionban = curl -X POST -H "Content-Type: application/json" -d '{"content": "🚨 **[Fail2Ban]** IP banido!\n**IP:** <ip>\n**Jail:** <name>\n**Tentativas:** <failures>"}' <webhook>
-actionunban = curl -X POST -H "Content-Type: application/json" -d '{"content": "✅ **[Fail2Ban]** IP desbanido.\n**IP:** <ip>\n**Jail:** <name>"}' <webhook>
-EOF
-
+# Criar action simulando block, o fail2ban via SSH já será pego pelo authScanner.ts no Bot
 # Configurar jail.local
 cat << EOF > /etc/fail2ban/jail.local
 [DEFAULT]
@@ -95,25 +85,9 @@ port = ssh
 filter = sshd
 logpath = /var/log/auth.log
 maxretry = 3
-action = iptables-multiport[name=ssh, port="ssh", protocol="tcp"]
-         discord-webhook[webhook="${DISCORD_SECURITY_WEBHOOK}"]
 EOF
 
 systemctl restart fail2ban
-
-echo -e "\n${GREEN}[+] Configurando alerta de login SSH...${NC}"
-cat << EOF > /etc/profile.d/ssh-telegram-alert.sh
-if [ -n "\$SSH_CLIENT" ]; then
-    IP=\$(echo \$SSH_CLIENT | awk '{print \$1}')
-    USER=\$(whoami)
-    HOST=\$(hostname)
-    DATE=\$(date +"%Y-%m-%d %H:%M:%S")
-
-    PAYLOAD=\$(jq -n --arg content "🔐 **[SSH Login Realizado]**\n**Usuário:** \$USER\n**Host:** \$HOST\n**IP:** \$IP\n**Data:** \$DATE" '{content: \$content}')
-    curl -s -X POST -H "Content-Type: application/json" -d "\$PAYLOAD" "${DISCORD_SECURITY_WEBHOOK}" > /dev/null 2>&1
-fi
-EOF
-chmod +x /etc/profile.d/ssh-telegram-alert.sh
 
 # ==============================================================================
 # 2. Otimização de Kernel (Network e File Descriptors)
