@@ -98,3 +98,20 @@ echo -e "${GREEN}✅ Instalação concluída com sucesso!${NC}"
 echo -e "Para checar o status do bot, digite: ${ORANGE}pm2 status${NC}"
 echo -e "Para ver os logs do bot, digite: ${ORANGE}pm2 logs UplexInfraBot${NC}"
 echo -e "${ORANGE}====================================================${NC}"
+
+# Verifica se há kernel pendente e oferece reboot automático
+if [ -f /var/run/reboot-required ]; then
+    echo ""
+    echo -e "${ORANGE}⚠️  O sistema detectou uma atualização de kernel pendente.${NC}"
+    echo -e "${ORANGE}   Um reboot é recomendado para aplicá-la.${NC}"
+    echo -e "${ORANGE}   O bot voltará automaticamente após o reboot (PM2 startup).${NC}"
+    echo ""
+    read -p "Deseja reiniciar o servidor agora? (s/n): " REBOOT_CHOICE
+    if [[ "$REBOOT_CHOICE" =~ ^[sS]$ ]]; then
+        echo -e "${GREEN}Reiniciando em 5 segundos...${NC}"
+        sleep 5
+        reboot
+    else
+        echo -e "${ORANGE}OK. Lembre-se de rodar 'sudo reboot' quando puder.${NC}"
+    fi
+fi
