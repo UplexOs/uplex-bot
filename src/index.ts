@@ -96,8 +96,8 @@ client.once('ready', () => {
     }
 
     const channel = client.channels.cache.get(alertChannelId);
-    if (channel && channel.isTextBased()) {
-        channel.send("✅ Agente de Infraestrutura online e monitorando o sistema.");
+    if (channel && channel.isTextBased() && 'send' in channel) {
+        (channel as any).send("✅ Agente de Infraestrutura online e monitorando o sistema.");
 
         // Iniciar monitores passando o canal para alertas
         startProcessWatchdog(channel);

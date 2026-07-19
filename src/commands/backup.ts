@@ -2,8 +2,19 @@ import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentB
 import shell from 'shelljs';
 import fs from 'fs';
 import path from 'path';
-import { format } from 'date-fns';
-import { filesize } from 'filesize';
+
+function formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+function formatDate(d: Date): string {
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
+}
 
 export async function handleBackupCommand(interaction: any) {
     await interaction.deferReply();
@@ -12,7 +23,7 @@ export async function handleBackupCommand(interaction: any) {
 
     await interaction.editReply(`🔄 Iniciando backup de **${target}**...`);
 
-    const dateStr = format(new Date(), 'yyyy-MM-dd_HH-mm-ss');
+    const dateStr = formatDate(new Date());
     const backupDir = path.join(process.cwd(), 'backups');
 
     if (!fs.existsSync(backupDir)) {
@@ -48,7 +59,7 @@ export async function handleBackupCommand(interaction: any) {
 
     if (success && fs.existsSync(backupFile)) {
         const stats = fs.statSync(backupFile);
-        const sizeStr = filesize(stats.size, {standard: "jedec"}) as string;
+        const sizeStr = formatBytes(stats.size);
 
         const embed = new EmbedBuilder()
             .setTitle('✅ Backup Concluído')

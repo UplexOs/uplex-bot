@@ -1,7 +1,14 @@
 import { EmbedBuilder } from 'discord.js';
 import shell from 'shelljs';
 import os from 'os';
-import { filesize } from 'filesize';
+
+function formatBytes(bytes: number): string {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
 
 export async function handleStatusCommand(interaction: any) {
     await interaction.deferReply();
@@ -37,7 +44,7 @@ export async function handleStatusCommand(interaction: any) {
         .setDescription(`Resumo da saúde da VPS e recursos.`)
         .addFields(
             { name: 'Uptime', value: `\`${uptimeStr || 'Desconhecido'}\``, inline: false },
-            { name: 'RAM (Usada/Total)', value: `\`${filesize(usedMem, {standard: "jedec"})} / ${filesize(totalMem, {standard: "jedec"})} (${memPercent}%)\``, inline: true },
+            { name: 'RAM (Usada/Total)', value: `\`${formatBytes(usedMem)} / ${formatBytes(totalMem)} (${memPercent}%)\``, inline: true },
             { name: 'Disco (Root)', value: `\`${dfResult || 'Desconhecido'}\``, inline: true },
             { name: 'CPU Load (1m, 5m, 15m)', value: `\`${loadAvg}\``, inline: true },
             { name: 'Containers Docker', value: `\`${dockerCount} rodando\``, inline: true },

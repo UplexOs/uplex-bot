@@ -1,5 +1,4 @@
 import fs from 'fs';
-import chokidar from 'chokidar';
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 
 const AUTH_LOG_PATHS = [
@@ -7,60 +6,43 @@ const AUTH_LOG_PATHS = [
     '/var/log/secure',   // CentOS/RHEL
 ];
 
-// Dicionário para guardar o estado dos arquivos para ler apenas as novas linhas
 const authPointers: { [key: string]: number } = {};
 
 export function startAuthMonitor(discordChannel: any) {
     console.log('🛡️ Iniciando Monitor de Autenticação (SSH)...');
 
-    // Identificar qual arquivo de log de auth existe no sistema
-    const existingLogPath = AUTH_LOG_PATHS.find(path => fs.existsSync(path));
+    const existingLogPath = AUTH_LOG_PATHS.find(p => fs.existsSync(p));
 
     if (!existingLogPath) {
         console.warn('⚠️ Arquivo auth.log ou secure não encontrado. O monitor de SSH não funcionará.');
         return;
     }
 
-    const watcher = chokidar.watch(existingLogPath, {
-        persistent: true,
-        ignoreInitial: true,
-        usePolling: false,
-    });
-
     const stats = fs.statSync(existingLogPath);
     authPointers[existingLogPath] = stats.size;
 
-    watcher.on('change', (filePath) => {
-        if (authPointers[filePath] === undefined) {
-            const currentStats = fs.statSync(filePath);
-            authPointers[filePath] = currentStats.size;
-            return;
+    fs.watchFile(existingLogPath, { interval: 2000 }, (curr, prev) => {
+        if (curr.size < prev.size) {
+            authPointers[existingLogPath] = 0;
         }
 
-        const currentStats = fs.statSync(filePath);
-
-        if (currentStats.size < authPointers[filePath]) {
-            authPointers[filePath] = 0; // Log foi rotacionado
-        }
-
-        const sizeDiff = currentStats.size - authPointers[filePath];
+        const sizeDiff = curr.size - (authPointers[existingLogPath] ?? 0);
 
         if (sizeDiff > 0) {
             const buffer = Buffer.alloc(sizeDiff);
-            const fd = fs.openSync(filePath, 'r');
-            fs.readSync(fd, buffer, 0, sizeDiff, authPointers[filePath]);
+            const fd = fs.openSync(existingLogPath, 'r');
+            fs.readSync(fd, buffer, 0, sizeDiff, authPointers[existingLogPath]);
             fs.closeSync(fd);
 
             const newContent = buffer.toString();
             const lines = newContent.split('\n').filter(line => line.trim() !== '');
 
-            authPointers[filePath] = currentStats.size;
+            authPointers[existingLogPath] = curr.size;
 
             lines.forEach(line => {
                 // Monitorando login com sucesso
                 if (line.includes('sshd') && line.includes('Accepted')) {
                     const parts = line.split(/\s+/);
-                    // Extract data intelligently from auth.log
                     const userIndex = parts.indexOf('for') + 1;
                     const user = parts[userIndex] || 'Desconhecido';
 
