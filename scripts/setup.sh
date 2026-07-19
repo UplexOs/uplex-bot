@@ -1,0 +1,173 @@
+#!/bin/bash
+
+# ==============================================================================
+# Ultimate Infrastructure Kit - Bootstrap Script
+# ==============================================================================
+# Este script configura uma VPS do zero com segurança, otimizações e proxy.
+# Requer execução como root.
+
+set -e # Interrompe o script em caso de erro
+
+# Cores para output
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo -e "${GREEN}=== Inicializando o Kit de Infraestrutura Definitivo ===${NC}"
+
+if [ "$EUID" -ne 0 ]; then
+  echo -e "${RED}Por favor, execute este script como root (sudo).${NC}"
+  exit 1
+fi
+
+# ==============================================================================
+# 0. Coleta de Variáveis
+# ==============================================================================
+echo -e "${YELLOW}Por favor, insira as informações abaixo:${NC}"
+read -p "Webhook URL do Discord para alertas de segurança: " DISCORD_SECURITY_WEBHOOK
+read -p "Domínio para o Nginx/Certbot (ex: api.meujogo.com): " DOMAIN_NAME
+read -p "Email para registro no Let's Encrypt (Certbot): " LETSENCRYPT_EMAIL
+
+# Atualizando repositórios
+echo -e "\n${GREEN}[+] Atualizando o sistema...${NC}"
+apt-get update && apt-get upgrade -y
+apt-get install -y curl wget git ufw iptables-persistent fail2ban nginx certbot python3-certbot-nginx jq docker.io docker-compose
+
+# ==============================================================================
+# 1. Segurança Base (UFW, Iptables e Fail2ban)
+# ==============================================================================
+echo -e "\n${GREEN}[+] Configurando UFW (Firewall)...${NC}"
+ufw --force reset
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow ssh
+ufw allow http
+ufw allow https
+ufw allow 4000/tcp # Porta do CI/CD Webhook
+ufw --force enable
+
+echo -e "\n${GREEN}[+] Configurando Fail2ban e Alertas no Discord...${NC}"
+
+# Criar action do Discord para o Fail2ban
+cat << 'EOF' > /etc/fail2ban/action.d/discord-webhook.conf
+[Definition]
+actionstart =
+actionstop =
+actioncheck =
+actionban = curl -X POST -H "Content-Type: application/json" -d '{"content": "🚨 **[Fail2Ban]** IP banido!\n**IP:** <ip>\n**Jail:** <name>\n**Tentativas:** <failures>"}' <webhook>
+actionunban = curl -X POST -H "Content-Type: application/json" -d '{"content": "✅ **[Fail2Ban]** IP desbanido.\n**IP:** <ip>\n**Jail:** <name>"}' <webhook>
+EOF
+
+# Configurar jail.local
+cat << EOF > /etc/fail2ban/jail.local
+[DEFAULT]
+bantime = 1h
+findtime = 10m
+maxretry = 5
+
+[sshd]
+enabled = true
+port = ssh
+filter = sshd
+logpath = /var/log/auth.log
+maxretry = 3
+action = iptables-multiport[name=ssh, port="ssh", protocol="tcp"]
+         discord-webhook[webhook="${DISCORD_SECURITY_WEBHOOK}"]
+EOF
+
+systemctl restart fail2ban
+
+echo -e "\n${GREEN}[+] Configurando alerta de login SSH...${NC}"
+cat << EOF > /etc/profile.d/ssh-telegram-alert.sh
+if [ -n "\$SSH_CLIENT" ]; then
+    IP=\$(echo \$SSH_CLIENT | awk '{print \$1}')
+    USER=\$(whoami)
+    HOST=\$(hostname)
+    DATE=\$(date +"%Y-%m-%d %H:%M:%S")
+
+    PAYLOAD=\$(jq -n --arg content "🔐 **[SSH Login Realizado]**\n**Usuário:** \$USER\n**Host:** \$HOST\n**IP:** \$IP\n**Data:** \$DATE" '{content: \$content}')
+    curl -s -X POST -H "Content-Type: application/json" -d "\$PAYLOAD" "${DISCORD_SECURITY_WEBHOOK}" > /dev/null 2>&1
+fi
+EOF
+chmod +x /etc/profile.d/ssh-telegram-alert.sh
+
+# ==============================================================================
+# 2. Otimização de Kernel (Network e File Descriptors)
+# ==============================================================================
+echo -e "\n${GREEN}[+] Otimizando Kernel (TCP BBR e Limits)...${NC}"
+cat << 'EOF' >> /etc/sysctl.conf
+
+# Otimizações de Rede e File Descriptors
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+fs.file-max = 2097152
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+net.core.somaxconn = 65535
+EOF
+sysctl -p
+
+cat << 'EOF' >> /etc/security/limits.conf
+* soft nofile 1048576
+* hard nofile 1048576
+root soft nofile 1048576
+root hard nofile 1048576
+EOF
+
+# ==============================================================================
+# 3. Automação e Faxina (Cronjobs)
+# ==============================================================================
+echo -e "\n${GREEN}[+] Criando scripts de limpeza e backup...${NC}"
+
+# Script de Garbage Collector
+cat << 'EOF' > /usr/local/bin/gc-cleaner.sh
+#!/bin/bash
+echo "Iniciando Garbage Collection..."
+docker system prune -af --volumes
+journalctl --vacuum-time=3d
+apt-get autoremove -y
+apt-get clean
+echo "Limpeza concluída."
+EOF
+chmod +x /usr/local/bin/gc-cleaner.sh
+
+# Adicionar no Cron (Roda as 4 da manhã)
+(crontab -l 2>/dev/null; echo "0 4 * * * /usr/local/bin/gc-cleaner.sh > /var/log/gc-cleaner.log 2>&1") | crontab -
+
+# ==============================================================================
+# 4. Proxy Reverso (Nginx e Certbot)
+# ==============================================================================
+if [ -n "$DOMAIN_NAME" ] && [ -n "$LETSENCRYPT_EMAIL" ]; then
+    echo -e "\n${GREEN}[+] Configurando Nginx e SSL para ${DOMAIN_NAME}...${NC}"
+
+    cat << EOF > /etc/nginx/sites-available/bot
+server {
+    listen 80;
+    server_name ${DOMAIN_NAME};
+
+    location / {
+        proxy_pass http://localhost:4000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_addrs;
+    }
+}
+EOF
+
+    ln -sf /etc/nginx/sites-available/bot /etc/nginx/sites-enabled/
+    nginx -t
+    systemctl restart nginx
+
+    # Gerar certificado SSL (Isso requer que o domínio já esteja apontando para o IP da VPS)
+    echo -e "${YELLOW}Nota: O Certbot tentará gerar o SSL. Se o DNS não estiver propagado, ele falhará, mas o setup continuará.${NC}"
+    certbot --nginx -d ${DOMAIN_NAME} --non-interactive --agree-tos -m ${LETSENCRYPT_EMAIL} || true
+fi
+
+echo -e "\n${GREEN}=== Bootstrap concluído com sucesso! ===${NC}"
+echo -e "A máquina foi otimizada, protegida e preparada."
+echo -e "Próximo passo: Configurar e rodar o Agente TypeScript (Bot Discord)."
