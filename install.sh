@@ -5,13 +5,16 @@
 # ==============================================================================
 # Este script automatiza o deploy completo: roda o bootstrap e faz o setup do bot.
 
-set -e
-
 GREEN='\033[0;32m'
-BLUE='\033[0;34m'
 RED='\033[0;31m'
 ORANGE='\033[38;5;214m'
 NC='\033[0m'
+
+# Silencia avisos de kernel pendente e prompts do needrestart
+# Isso evita que o usuário veja mensagens assustadoras durante a instalação
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+export NEEDRESTART_SUSPEND=1
 
 echo -e "${ORANGE}====================================================${NC}"
 echo -e "${ORANGE}            Instalador Kit UpLex VPS                ${NC}"
@@ -98,20 +101,3 @@ echo -e "${GREEN}✅ Instalação concluída com sucesso!${NC}"
 echo -e "Para checar o status do bot, digite: ${ORANGE}pm2 status${NC}"
 echo -e "Para ver os logs do bot, digite: ${ORANGE}pm2 logs UplexInfraBot${NC}"
 echo -e "${ORANGE}====================================================${NC}"
-
-# Verifica se há kernel pendente e oferece reboot automático
-if [ -f /var/run/reboot-required ]; then
-    echo ""
-    echo -e "${ORANGE}⚠️  O sistema detectou uma atualização de kernel pendente.${NC}"
-    echo -e "${ORANGE}   Um reboot é recomendado para aplicá-la.${NC}"
-    echo -e "${ORANGE}   O bot voltará automaticamente após o reboot (PM2 startup).${NC}"
-    echo ""
-    read -p "Deseja reiniciar o servidor agora? (s/n): " REBOOT_CHOICE
-    if [[ "$REBOOT_CHOICE" =~ ^[sS]$ ]]; then
-        echo -e "${GREEN}Reiniciando em 5 segundos...${NC}"
-        sleep 5
-        reboot
-    else
-        echo -e "${ORANGE}OK. Lembre-se de rodar 'sudo reboot' quando puder.${NC}"
-    fi
-fi
