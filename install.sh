@@ -123,6 +123,16 @@ if [ -n "$DOCKER_DB_CONTAINERS" ]; then
             DB_NAME="${DB_NAME_INPUT:-postgres}"
             read -p "  Porta do banco (padrão: 5432): " DB_PORT_INPUT
             DB_PORT="${DB_PORT_INPUT:-5432}"
+
+            # Teste de conexão
+            echo -e "\n${ORANGE}[+] Testando conexão com o PostgreSQL no container...${NC}"
+            if docker exec "$DB_DOCKER_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -p "$DB_PORT" -c "SELECT 1;" &>/dev/null; then
+                echo -e "${GREEN}  ✅ Conexão com o banco de dados OK!${NC}"
+            else
+                echo -e "${RED}  ❌ Falha na conexão com o banco de dados.${NC}"
+                echo -e "${RED}     Verifique usuário, banco e porta. O /backup pode não funcionar.${NC}"
+            fi
+
         elif docker exec "$DB_DOCKER_CONTAINER" which mysqldump &>/dev/null; then
             echo -e "${GREEN}  ✔ MySQL/MariaDB detectado no container.${NC}"
             read -p "  Usuário do MySQL (padrão: root): " DB_USER_INPUT
@@ -132,6 +142,17 @@ if [ -n "$DOCKER_DB_CONTAINERS" ]; then
             echo ""
             read -p "  Porta do banco (padrão: 3306): " DB_PORT_INPUT
             DB_PORT="${DB_PORT_INPUT:-3306}"
+
+            # Teste de conexão
+            echo -e "\n${ORANGE}[+] Testando conexão com o MySQL no container...${NC}"
+            MYSQL_PASS_FLAG=""
+            if [ -n "$DB_PASS" ]; then MYSQL_PASS_FLAG="-p${DB_PASS}"; fi
+            if docker exec "$DB_DOCKER_CONTAINER" mysql -u "$DB_USER" $MYSQL_PASS_FLAG -P "$DB_PORT" -e "USE \`${DB_NAME}\`; SELECT 1;" &>/dev/null; then
+                echo -e "${GREEN}  ✅ Conexão com o banco de dados OK!${NC}"
+            else
+                echo -e "${RED}  ❌ Falha na conexão com o banco de dados.${NC}"
+                echo -e "${RED}     Verifique usuário, senha, banco e porta. O /backup pode não funcionar.${NC}"
+            fi
         else
             echo -e "${ORANGE}  ⚠ Não foi possível detectar o tipo do banco dentro do container.${NC}"
             DB_DOCKER_CONTAINER=""
@@ -149,6 +170,16 @@ if [ -z "$DB_DOCKER_CONTAINER" ]; then
         DB_NAME="${DB_NAME_INPUT:-postgres}"
         read -p "  Porta do banco (padrão: 5432): " DB_PORT_INPUT
         DB_PORT="${DB_PORT_INPUT:-5432}"
+
+        # Teste de conexão
+        echo -e "\n${ORANGE}[+] Testando conexão com o PostgreSQL...${NC}"
+        if sudo -u "$DB_USER" psql -d "$DB_NAME" -p "$DB_PORT" -c "SELECT 1;" &>/dev/null; then
+            echo -e "${GREEN}  ✅ Conexão com o banco de dados OK!${NC}"
+        else
+            echo -e "${RED}  ❌ Falha na conexão com o banco de dados.${NC}"
+            echo -e "${RED}     Verifique usuário, banco e porta. O /backup pode não funcionar.${NC}"
+        fi
+
     elif command -v mysqldump &> /dev/null; then
         echo -e "${GREEN}  ✔ MySQL/MariaDB detectado (nativo na VPS).${NC}"
         read -p "  Usuário do MySQL (padrão: root): " DB_USER_INPUT
@@ -158,6 +189,17 @@ if [ -z "$DB_DOCKER_CONTAINER" ]; then
         echo ""
         read -p "  Porta do banco (padrão: 3306): " DB_PORT_INPUT
         DB_PORT="${DB_PORT_INPUT:-3306}"
+
+        # Teste de conexão
+        echo -e "\n${ORANGE}[+] Testando conexão com o MySQL...${NC}"
+        MYSQL_PASS_FLAG=""
+        if [ -n "$DB_PASS" ]; then MYSQL_PASS_FLAG="-p${DB_PASS}"; fi
+        if mysql -u "$DB_USER" $MYSQL_PASS_FLAG -P "$DB_PORT" -e "USE \`${DB_NAME}\`; SELECT 1;" &>/dev/null; then
+            echo -e "${GREEN}  ✅ Conexão com o banco de dados OK!${NC}"
+        else
+            echo -e "${RED}  ❌ Falha na conexão com o banco de dados.${NC}"
+            echo -e "${RED}     Verifique usuário, senha, banco e porta. O /backup pode não funcionar.${NC}"
+        fi
     else
         echo -e "${ORANGE}  ⚠ Nenhum banco de dados detectado. O comando /backup não funcionará até instalar um.${NC}"
     fi
